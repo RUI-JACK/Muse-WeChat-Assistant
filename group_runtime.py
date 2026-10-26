@@ -11,6 +11,8 @@ from group_context import GroupArchive,GroupContext
 from context_archive import default_archive_root
 from image_support import media_type,extract_attachment,ImageUnavailable,MAX_ATTACHMENTS
 from storage import LOCAL,Journal,status
+from reply_scope import begin_reply,end_reply
+from reply_queue import batch_ready,muse_wait_reason
 
 
 def approval(group,incoming,draft,event):
@@ -23,6 +25,7 @@ class GroupSession:
     def __init__(self,wx,memory,initial,self_name,tracker_class,diagnostics=None):
         self.wx=wx;self.memory=memory;self.self_name=self_name
         self.tracker=tracker_class(initial);self.pending=[];self.last_incoming=0;self.manual_epoch=0
+        self.first_incoming=0
         self.diagnostics=diagnostics or ReceiveDiagnostics();self.waiting_sender_count=0;self.receive_reason=''
         self.memory.seed([(m,m.direction) for m in initial[-12:]])
 
@@ -46,9 +49,10 @@ class GroupSession:
                 record=self.memory.record(m,m.direction)
                 echo=record is not None and any(r['key'].startswith('sent:') and GroupContext.signature(r)==GroupContext.signature(record) for r in list(self.memory.turns)[-8:])
                 if not echo:
-                    self.manual_epoch+=1;self.pending.clear();self.last_incoming=0
+                    self.manual_epoch+=1
             self.memory.observe(m,m.direction)
             if eligible(m,self.self_name):
+                if not self.pending:self.first_incoming=time.monotonic()
                 self.pending.append(m);self.last_incoming=time.monotonic()
                 self.diagnostics.record(m.key,'queued',mentioned=True)
             elif media_type(m) and m.direction=='incoming' and m.sender and self.pending and self.pending[-1].sender==m.sender:
@@ -62,13 +66,6 @@ class GroupSession:
         return current
 
 
-def muse_wait_reason(muse):
-    if muse.generating():return 'Muse 仍在完成上一条回复，新的 @ 消息已排队，继续监听。'
-    edit,_,_=muse.composer()
-    if edit.GetValuePattern().Value:return 'Muse 有未发送草稿，新的 @ 消息已排队，不会覆盖草稿。'
-    return ''
-
-
 def process_group(session,muse,journal,batch,config,review=approval):
     from bridge import wait_draft,STOP,record_failure
     group,self_name=group_config(config);wx=session.wx
@@ -80,14 +77,15 @@ def process_group(session,muse,journal,batch,config,review=approval):
     event=journal.create('群聊｜'+group,'\n'.join(m.sender+'：'+m.text for m in batch))
     base={'pid':os.getpid(),'contact':group,'chat_mode':'group','group_self_name':self_name,
           'group_reply_policy':'mention','mentioned_self':True,'trigger_keys':keys,'event_id':event,'mode':config['mode']}
-    epoch=session.manual_epoch;workspace=None;stage='preparing';signature=None
+    workspace=None;stage='preparing'
+    scope=begin_reply(wx,group,event,'group')
+    history=session.memory.for_reply(group,keys)
     incoming=[{'sender':m.sender,'content':m.text,'kind':media_type(m) or 'text'} for m in batch]
     def check():
-        session.pump()
-        if session.manual_epoch!=epoch:raise SendDeferred('本人已在群里回复，本条自动回复跳过，继续监听。')
-        if signature is not None and wx.send_signature()!=signature:raise SendDeferred('群内本人消息已变化，本条跳过。')
+        try:session.pump()
+        except (NotReady,COMError):pass
     try:
-        signature=wx.send_signature();attachments=[]
+        attachments=[]
         images=[m for m in batch if media_type(m)]
         if images:
             if len(images)>MAX_ATTACHMENTS:raise ImageUnavailable('本批图片过多，跳过。')
@@ -97,7 +95,7 @@ def process_group(session,muse,journal,batch,config,review=approval):
             attachments=[extract_attachment(wx,m,workspace.name,capture_window,walk,STOP.exists) for m in images]
         check();journal.state(event,'submitted');stage='muse'
         status('waiting_muse',**base)
-        muse.request_group(event,group,self_name,incoming,session.memory.before(group,keys),config['max_reply_characters'],attachments,STOP.exists)
+        muse.request_group(event,group,self_name,incoming,history,config['max_reply_characters'],attachments,STOP.exists)
         answer=wait_draft(muse,event,config,on_poll=check)
         check();outgoing=config['disclosure']+'\n'+answer;journal.draft(event,outgoing)
         status('awaiting_approval',**base);stage='review'
@@ -106,7 +104,7 @@ def process_group(session,muse,journal,batch,config,review=approval):
         if decision!=6:journal.state(event,'skipped');return 'skipped'
         check();journal.state(event,'approved');status('sending',**base)
         journal.state(event,'sending');stage='sending'
-        visible=wx.send_approved(outgoing,signature,STOP.exists)
+        visible=wx.send_approved(outgoing,scope,STOP.exists)
         journal.state(event,'sent_ui' if visible else 'unconfirmed')
         if visible:session.memory.confirm_sent(event,outgoing)
         status('sent_ui' if visible else 'send_unconfirmed',**base)
@@ -130,6 +128,7 @@ def process_group(session,muse,journal,batch,config,review=approval):
         status('send_unconfirmed' if stage=='sending' else 'needs_attention',reason=str(exc),**base)
         return 'pause'
     finally:
+        end_reply(wx,scope)
         wx.required_sources=set()
         if workspace:workspace.cleanup()
 
@@ -156,12 +155,12 @@ def run_group(config):
         while not STOP.exists():
             try:
                 session.pump()
-                if session.pending and time.monotonic()-session.last_incoming>=config['merge_seconds']:
+                if batch_ready(session.pending,session.first_incoming,config['merge_seconds']):
                     wait_reason=muse_wait_reason(muse)
                     if wait_reason:
                         status('waiting_desktop',reason=wait_reason,pending_count=len(session.pending),**base)
                         time.sleep(config['poll_seconds']);continue
-                    batch=session.pending;session.pending=[]
+                    batch=session.pending;session.pending=[];session.first_incoming=0
                     result=process_group(session,muse,journal,batch,config)
                     for message in batch:session.diagnostics.record(message.key,'result_'+result,mentioned=mentioned(message.text,self_name))
                     if result in ('pause','unconfirmed'):return 1

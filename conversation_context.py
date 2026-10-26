@@ -153,3 +153,10 @@ class ConversationContext:
                 break
             previous.append(turn)
         return clean_context(previous)
+
+    def for_reply(self,contact,source_keys):
+        if contact!=self.contact:raise ValueError('上下文不属于当前所选好友。')
+        keys=set(source_keys or [])
+        # Self-messages and a completed earlier AI reply can occur AFTER a
+        # queued incoming message. Keep them as context for the next batch.
+        return clean_context([turn for turn in self.turns if turn['key'] not in keys])

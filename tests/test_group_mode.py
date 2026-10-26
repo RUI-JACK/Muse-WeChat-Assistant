@@ -130,11 +130,11 @@ class Listener(unittest.TestCase):
         edit.GetValuePattern.return_value.Value=''
         self.assertEqual(muse_wait_reason(muse),'')
 
-    def test_manual_reply_clears_only_current_queue_future_mentions_work(self):
+    def test_phone_reply_keeps_queued_mentions_and_future_mentions(self):
         s=self.session([msg('base','你好')]);s.wx.snapshot.return_value=[msg('base','你好'),msg('a','@测试群昵称')]
         s.pump();self.assertEqual(len(s.pending),1)
-        s.wx.snapshot.return_value+=[msg('b','我回了','测试群昵称','outgoing')];s.pump();self.assertFalse(s.pending)
-        s.wx.snapshot.return_value+=[msg('c','@测试群昵称')];s.pump();self.assertEqual(s.pending[0].key,'c')
+        s.wx.snapshot.return_value+=[msg('b','我回了','测试群昵称','outgoing')];s.pump();self.assertEqual([m.key for m in s.pending],['a'])
+        s.wx.snapshot.return_value+=[msg('c','@测试群昵称')];s.pump();self.assertEqual([m.key for m in s.pending],['a','c'])
 
     def test_other_members_media_never_attached_to_caller(self):
         s=self.session([msg('base','你好')]);s.wx.snapshot.return_value+=[msg('a','@测试群昵称','甲'),msg('b','图片','乙',kind='mmui::ChatImageItemView')]
@@ -153,18 +153,22 @@ class Listener(unittest.TestCase):
         s.wx.send_approved.assert_called_once()
         self.assertEqual(journal.create.call_args.args[0],'群聊｜测试群聊')
 
-    def test_manual_reply_during_generation_skips_without_send(self):
+    def test_phone_reply_during_generation_does_not_cancel_send(self):
         s=self.session();muse=Mock();journal=Mock();s.pump=Mock(side_effect=lambda:setattr(s,'manual_epoch',s.manual_epoch+1))
+        journal.create.return_value='phone-event'
+        muse.draft.return_value='当前这轮完成'
         with patch('bridge.STOP',SimpleNamespace(exists=lambda:False)):
-            self.assertEqual(process_group(s,muse,journal,[msg('a','@测试群昵称')],CFG,lambda *a:6),'skipped')
-        s.wx.send_approved.assert_not_called()
+            self.assertEqual(process_group(s,muse,journal,[msg('a','@测试群昵称')],CFG,lambda *a:6),'sent_ui')
+        s.wx.send_approved.assert_called_once()
 
-    def test_pre_send_view_change_skips_only_this_reply_not_the_listener(self):
+    def test_old_trigger_rolling_off_view_does_not_cancel_a_verified_text_reply(self):
         s=self.session();muse=Mock();journal=Mock()
+        journal.create.return_value='scroll-event'
+        muse.draft.return_value='当前这轮完成';s.pump=Mock()
         s.wx.send_signature.side_effect=NotReady('触发消息已滚出视图')
         with patch('bridge.STOP',SimpleNamespace(exists=lambda:False)):
-            self.assertEqual(process_group(s,muse,journal,[msg('a','@测试群昵称')],CFG,lambda *a:6),'skipped')
-        muse.request_group.assert_not_called();s.wx.send_approved.assert_not_called()
+            self.assertEqual(process_group(s,muse,journal,[msg('a','@测试群昵称')],CFG,lambda *a:6),'sent_ui')
+        s.wx.send_signature.assert_not_called();s.wx.send_approved.assert_called_once()
 
     def test_no_and_cancel_and_duplicate_never_send(self):
         for decision,expected in ((7,'skipped'),(2,'pause')):

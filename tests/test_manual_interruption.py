@@ -177,6 +177,7 @@ class ListenerRecovery(unittest.TestCase):
                  patch.object(bridge, 'CONFIG', config), patch.object(bridge, 'acquire_lock', return_value=99), \
                  patch.object(bridge.win32api, 'CloseHandle'), patch.object(bridge, 'Journal'), \
                  patch.object(bridge, 'WeChat', return_value=wx), patch.object(bridge, 'Muse'), \
+                 patch.object(bridge, 'muse_wait_reason', return_value=''), \
                  patch.object(bridge, 'status', side_effect=on_status), \
                  patch.object(bridge, 'process_batch', side_effect=on_batch), \
                  patch.object(bridge.time, 'sleep', side_effect=tick), \
@@ -192,13 +193,13 @@ class ListenerRecovery(unittest.TestCase):
         self.assertEqual(calls, ['in-first', 'in-second'])
         self.assertNotIn('needs_attention', states)
 
-    def test_manual_reply_clears_pending_but_next_incoming_is_processed(self):
+    def test_phone_reply_does_not_clear_pending_and_next_incoming_is_processed(self):
         base, first, owner, second = row('base'), row('in-first'), row('out-owner'), row('in-second')
         calls, states = self.run_fake_listener(
             [[base], [base, first], [base, first, owner],
              [base, first, owner, second], [base, first, owner, second]],
-            [0, 0, 4, 10, 14], ['sent_ui'], 3)
-        self.assertEqual(calls, ['in-second'])
+            [0, 0, 4, 10, 14], ['sent_ui','sent_ui'], 3)
+        self.assertEqual(calls, ['in-first','in-second'])
 
 
 if __name__ == '__main__':

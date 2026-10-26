@@ -293,13 +293,13 @@ class ImageReplyFlow(unittest.TestCase):
         self.wx.send_approved.assert_not_called()
         self.assertTrue(self.paths and all(not p.exists() for p in self.paths))
 
-    def test_new_media_supersedes_finished_draft_before_confirmation(self):
+    def test_new_media_does_not_cancel_the_current_frozen_media_reply(self):
         def arrival(*args):
             self.wx.snapshot.return_value=[self.m,row('new-picture')]
             return 'old draft'
         with patch.object(bridge,'wait_draft',side_effect=arrival):
-            self.assertEqual(self.process(),'superseded')
-        self.wx.send_approved.assert_not_called()
+            self.assertEqual(self.process(),'sent_ui')
+        self.wx.send_approved.assert_called_once()
 
     def test_same_sticker_finishing_loading_does_not_discard_its_reply(self):
         def refreshed(*args):

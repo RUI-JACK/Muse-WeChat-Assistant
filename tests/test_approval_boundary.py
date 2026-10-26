@@ -48,13 +48,14 @@ class ApprovalBoundary(unittest.TestCase):
     def test_demo_yes_never_sends(self):
         self.assertEqual(self.process(6,True),'demo')
         self.assertEqual(self.wx.calls,[])
-    def test_chat_change_invalidates_before_review(self):
+    def test_later_incoming_does_not_invalidate_the_frozen_reply(self):
         def changed(*args):
             self.wx.rows.append(Message('new','new message','mmui::ChatTextItemView',(0,0,1,1)))
             return '旧草稿'
         with patch.object(bridge,'wait_draft',side_effect=changed):
-            self.assertEqual(self.process(6),'superseded')
-        self.assertEqual(self.wx.calls,[])
+            self.assertEqual(self.process(6),'sent_ui')
+        self.assertEqual(len(self.wx.calls),1)
+        self.assertTrue(self.wx.calls[0].endswith('旧草稿'))
     def test_stop_after_review_never_sends(self):
         with patch.object(bridge.STOP.__class__,'exists',return_value=True):
             self.assertEqual(self.process(6),'pause')
@@ -135,9 +136,7 @@ class ApprovalBoundary(unittest.TestCase):
                     Message('t2','01:26','mmui::ChatItemView',(0,0,1,1))]
         self.assertEqual(bridge.chat_tail(first),bridge.chat_tail(rerendered))
 
-    def test_new_sticker_supersedes_old_text_draft(self):
-        # Stickers now have their own image reply path, so an old text draft
-        # must not be sent after the friend has supplied a newer reaction.
+    def test_new_sticker_does_not_cancel_the_current_text_reply(self):
         seen=[]
         def arrive(*args):
             self.wx.rows.append(Message('sticker','动画表情','mmui::ChatBubbleReferItemView',(0,0,1,1)))
@@ -148,9 +147,9 @@ class ApprovalBoundary(unittest.TestCase):
         with patch.object(bridge,'wait_draft',side_effect=arrive):
             result=bridge.process_batch(self.wx,FakeMuse(),self.journal,'测试好友甲','hello',
                                         self.config,review=review)
-        self.assertEqual(result,'superseded')
-        self.assertEqual(seen,[])
-        self.assertEqual(len(self.wx.calls),0)
+        self.assertEqual(result,'sent_ui')
+        self.assertEqual(seen,[False])
+        self.assertEqual(len(self.wx.calls),1)
 
     def test_auto_confirmation_mode_is_gone(self):
         config={**self.config,'mode':'auto_confirm_local'}

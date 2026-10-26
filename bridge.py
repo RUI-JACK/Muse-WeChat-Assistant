@@ -17,6 +17,8 @@ from storage import ROOT, LOCAL, Journal, status
 from conversation_context import ConversationContext, clean_context
 from context_archive import ContactArchive, default_archive_root, migrate_runtime_archives
 from reply_metrics import ReplyTrace
+from reply_scope import begin_reply,end_reply
+from reply_queue import PrivateSession,muse_wait_reason
 
 CONFIG = json.loads((ROOT / 'config.json').read_text(encoding='utf-8'))
 STOP = LOCAL / 'STOP'
@@ -87,14 +89,14 @@ def record_failure(event_id,stage,exc):
                 'stack':[{'file':Path(f.filename).name,'line':f.lineno,'function':f.name} for f in frames]}
     (LOCAL/'last-error.json').write_text(json.dumps(diagnostic,ensure_ascii=False,indent=2),encoding='utf-8')
 
-def process_batch(wx,muse,journal,contact,incoming,config,demo=False,review=approval,source_keys=None,image_messages=None,conversation=None,on_sent=None,metrics=None):
+def process_batch(wx,muse,journal,contact,incoming,config,demo=False,review=approval,source_keys=None,image_messages=None,conversation=None,on_sent=None,metrics=None,on_poll=None):
     check_config(config)
     if contact != config['allowed_contact'] or getattr(wx,'contact',contact) != contact:
         raise NotReady('目标不在当前白名单内，拒绝处理。')
     if not demo and source_keys and not journal.claim_sources(source_keys):
         return 'skipped'
-    signature = chat_tail(wx.snapshot()) if not demo else []
     event_id = journal.create(contact,incoming)
+    scope=begin_reply(wx,contact,event_id) if not demo else None
     if metrics is not None:metrics.event_id=event_id
     status('waiting_muse',pid=os.getpid(),contact=contact,event_id=event_id,demo=demo,mode=config['mode'])
     journal.state(event_id,'submitted')
@@ -115,11 +117,9 @@ def process_batch(wx,muse,journal,contact,incoming,config,demo=False,review=appr
             workspace=tempfile.TemporaryDirectory(prefix='request-',dir=work_root,ignore_cleanup_errors=True)
             attachments=[extract_attachment(wx,m,workspace.name,capture_window,walk,STOP.exists)
                          for m in image_messages]
-            # UI extraction must not substitute an old picture if a newer
-            # arrival or a manual response changed the selected conversation.
-            if chat_tail(wx.snapshot())!=signature:
-                journal.state(event_id,'superseded')
-                return 'superseded'
+            # Extraction verifies each exact source. Later arrivals belong to
+            # the next batch and do not discard these verified attachments.
+            if on_poll is not None:on_poll()
             stage='requesting_muse'
             if metrics is not None:metrics.mark('muse_submit')
             status('uploading_images',pid=os.getpid(),contact=contact,event_id=event_id,
@@ -130,32 +130,16 @@ def process_batch(wx,muse,journal,contact,incoming,config,demo=False,review=appr
             muse.request(event_id,contact,incoming,config['max_reply_characters'],**context_options)
         stage = 'reading_muse'
         if metrics is not None:metrics.mark('muse_wait')
-        answer = wait_draft(muse,event_id,config)
+        answer = wait_draft(muse,event_id,config,**({'on_poll':on_poll} if on_poll is not None else {}))
         if metrics is not None:metrics.mark('validation')
         outgoing = config['disclosure'] + '\n' + answer
         journal.draft(event_id,outgoing)
         stage = 'validating_chat'
-        current_tail = [] if demo else chat_tail(wx.snapshot())
-        moved = current_tail != signature
-        if moved:
-            # Text and supported media supersede an older draft. Unsupported
-            # voice/file arrivals retain the original warning and review path.
-            added = [kind for kind,name in current_tail if (kind,name) not in signature]
-            if any(kind == 'mmui::ChatTextItemView' for kind in added) or any(
-                    media_type(m) and chat_tail([m])[0] not in signature
-                    for m in wx.snapshot()):
-                journal.state(event_id,'superseded')
-                status('draft_superseded',pid=os.getpid(),contact=contact,event_id=event_id,
-                       added_kinds=added[:3])
-                return 'superseded'
-            # Rows are only compared by content, so a repaint with the same
-            # text does not count as a move.
-            moved = bool(added)
+        moved = False  # This batch is frozen; interleaved messages are queued.
         status('awaiting_approval',pid=os.getpid(),contact=contact,event_id=event_id,demo=demo,
                mode=config['mode'],chat_moved=moved)
         stage = 'awaiting_approval'
         if metrics is not None:metrics.mark('approval')
-        approval_tail = chat_tail(wx.snapshot()) if moved and not demo else signature
         decision = review(contact,incoming,outgoing,demo,moved)
         if demo:
             journal.state(event_id,'demo')
@@ -175,7 +159,7 @@ def process_batch(wx,muse,journal,contact,incoming,config,demo=False,review=appr
         journal.state(event_id,'sending',config['mode'])
         stage = 'sending_wechat'
         if metrics is not None:metrics.mark('wechat_send')
-        visible = wx.send_approved(outgoing,approval_tail,STOP.exists)
+        visible = wx.send_approved(outgoing,scope,STOP.exists)
         if metrics is not None:metrics.mark('archive')
         journal.state(event_id,'sent_ui' if visible else 'unconfirmed',config['mode'])
         if visible and on_sent is not None:
@@ -217,6 +201,7 @@ def process_batch(wx,muse,journal,contact,incoming,config,demo=False,review=appr
         status('needs_attention',pid=os.getpid(),contact=contact,event_id=event_id,reason=type(exc).__name__,stage=stage)
         return 'pause'
     finally:
+        if scope is not None:end_reply(wx,scope)
         if workspace is not None:
             workspace.cleanup()
 
@@ -361,10 +346,7 @@ def run(demo=False,no_dialog=False,resume_latest=False):
     memory=ConversationContext(contact,CONFIG['disclosure'],ContactArchive(archive_root,contact))
     status('reading_context',pid=os.getpid(),contact=contact,mode=CONFIG['mode'])
     seed_context(wx,memory,initial)
-    tracker = MessageTracker(initial,resume_latest)
-    pending = []
-    last_incoming = 0
-    ignored = 0
+    session=PrivateSession(wx,memory,initial,MessageTracker,resume_latest)
     status('listening',pid=os.getpid(),contact=contact,baseline_rows=len(initial),sent_count=0,mode=CONFIG['mode'],
            context_archive=memory.archive_path,context_archive_error=memory.archive_error)
     sent_count = 0
@@ -372,35 +354,24 @@ def run(demo=False,no_dialog=False,resume_latest=False):
     while not STOP.exists():
         sleep_delay=CONFIG['poll_seconds']
         try:
-            current = wx.snapshot()
-            for message in tracker.update(current):
-                direction = wx.direction(message)
-                if direction == 'unknown':
-                    raise NotReady('无法可靠区分消息发送者，保持暂停识别。')
-                memory.observe(message,direction)
-                tracker.handled(message.key)
-                if direction == 'incoming':
-                    pending.append(message)
-                    last_incoming = time.monotonic()
-                elif direction == 'outgoing':
-                    # The owner has already answered these pending arrivals.
-                    # A later incoming row in this same snapshot starts a new batch.
-                    pending.clear()
-                    last_incoming = 0
-                    ignored += 1
-                else:
-                    ignored += 1
-            if pending and time.monotonic()-last_incoming >= CONFIG['merge_seconds']:
-                images=[m for m in pending if media_type(m)]
+            session.pump()
+            if session.ready(CONFIG['merge_seconds']):
+                wait_reason=muse_wait_reason(muse)
+                if wait_reason:
+                    status('waiting_desktop',pid=os.getpid(),contact=contact,reason=wait_reason,pending_count=len(session.pending),mode=CONFIG['mode'])
+                    time.sleep(CONFIG['poll_seconds']);continue
+                first_incoming=session.first_incoming
+                batch=session.take()
+                images=[m for m in batch if media_type(m)]
                 labels={m.key:i for i,m in enumerate(images,1)}
                 incoming = '\n'.join((f'[附件{labels[m.key]}：'+('表情包' if media_type(m)=='sticker' else '图片')+']')
-                                     if media_type(m) else m.text for m in pending)
-                source_keys = [m.key for m in pending]
-                pending.clear()
+                                     if media_type(m) else m.text for m in batch)
+                source_keys = [m.key for m in batch]
                 options={'image_messages':images} if images else {}
-                options['conversation']=memory.before(contact,source_keys)
+                options['conversation']=memory.for_reply(contact,source_keys)
                 options['on_sent']=memory.confirm_sent
-                trace=ReplyTrace(LOCAL,contact,time.monotonic()-last_incoming)
+                options['on_poll']=session.poll_during_reply
+                trace=ReplyTrace(LOCAL,contact,time.monotonic()-first_incoming)
                 options['metrics']=trace
                 result = process_batch(wx,muse,journal,contact,incoming,CONFIG,source_keys=source_keys,**options)
                 trace.finish(result)
@@ -409,10 +380,10 @@ def run(demo=False,no_dialog=False,resume_latest=False):
                 if result == 'sent_ui':
                     sent_count += 1
             memory.flush()
-            status('listening',pid=os.getpid(),contact=contact,sent_count=sent_count,ignored_rows=ignored,pending_count=len(pending),mode=CONFIG['mode'],
+            status('listening',pid=os.getpid(),contact=contact,sent_count=sent_count,ignored_rows=session.ignored,pending_count=len(session.pending),mode=CONFIG['mode'],
                    context_archive=memory.archive_path,context_archive_error=memory.archive_error)
             com_failures = 0
-            sleep_delay=listener_delay(CONFIG['poll_seconds'],CONFIG['merge_seconds'],pending,last_incoming)
+            sleep_delay=listener_delay(CONFIG['poll_seconds'],CONFIG['merge_seconds'],session.pending,session.first_incoming)
         except COMError as exc:
             com_failures += 1
             status('waiting_desktop',pid=os.getpid(),contact=contact,

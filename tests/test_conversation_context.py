@@ -90,6 +90,7 @@ class RunningContext(unittest.TestCase):
                  patch.object(bridge,'default_archive_root',return_value=local/'Documents'), \
                  patch.object(bridge,'acquire_lock',return_value=1),patch.object(bridge.win32api,'CloseHandle'), \
                  patch.object(bridge,'Journal'),patch.object(bridge,'WeChat',return_value=wx),patch.object(bridge,'Muse'), \
+                 patch.object(bridge,'muse_wait_reason',return_value=''), \
                  patch.object(bridge,'status',side_effect=status),patch.object(bridge.time,'sleep',side_effect=lambda _:stopped.__setitem__(0,True)), \
                  patch.object(bridge,'process_batch',return_value='skipped') as batch:
                 bridge.run()

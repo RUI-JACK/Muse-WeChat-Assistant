@@ -16,6 +16,7 @@ class GroupMessage(Message):
 
 
 class GroupWeChat(WeChat):
+    chat_kind='group'
     media_top_inset=27
     def __init__(self,group,self_name,expected_version=None,reader=None):
         super().__init__(group,expected_version)

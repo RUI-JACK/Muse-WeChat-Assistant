@@ -4,7 +4,7 @@ Windows 桌面助手：读取明确选择的微信会话，交给已登录的 Mu
 
 ## 安装与使用
 
-1. 从 [Releases](https://github.com/RUI-JACK/Muse-WeChat-Assistant/releases) 下载 `Muse-WeChat-Assistant-Setup-1.0.2-x64.exe`，安装时会离线准备 Python 与程序依赖。
+1. 从 [Releases](https://github.com/RUI-JACK/Muse-WeChat-Assistant/releases) 下载 `Muse-WeChat-Assistant-Setup-1.0.3-x64.exe`，安装时会离线准备 Python 与程序依赖。
 2. 自行安装并登录 **微信 4.1.15.56**。运行桌面“打开 Muse”，在独立浏览器窗口登录自己的 Muse 账号。
 3. 运行“Muse 微信助手”，选择私聊或群聊，输入准确会话名；群聊填写被 @ 时显示的本人群昵称，不含 @。在微信中选中该聊天后点击开始。
 4. “自动点击 Y”开启时自动确认并发送草稿，关闭时由本人逐条确认。开始前不监听历史；关闭状态窗口会结束它管理的工作进程。
@@ -14,6 +14,8 @@ Windows 桌面助手：读取明确选择的微信会话，交给已登录的 Mu
 微信、Muse、Chrome/Edge 不打包分发；目标机器需要 Chrome 或系统 Edge，Muse 需要网络及有效账号。软件使用普通桌面可访问性界面，不是微信官方接口，不支持锁屏、注销或完全脱离界面的服务运行。
 
 ## 功能与边界
+
+v1.0.3 队列更新：当前一轮开工后不再被手机同步消息或后续来信取消，后续消息排队；合并窗口按首条来信计时。仍保留本机输入框、目标、进程、模式和一次发送检查，见 [回复队列修复](REPLY-QUEUE-FIX.md)。手机先说话后 AI 仍可能发送已生成的回复，需要中止时请使用状态窗口的结束按钮。
 
 v1.0.2 修复私聊带引用图片/表情、媒体加载后标签变化及短暂空白画面导致的漏收，详情见 [图片与表情漏收修复](MEDIA-RECEIVE-FIX.md)。同时包含 v1.0.1 的 [群聊漏回修复](GROUP-RECEIVE-FIX.md)。升级前先结束助手，覆盖安装会保留配置和聊天上下文。
 
@@ -46,7 +48,7 @@ python -m venv .venv
 
 ```powershell
 python -m pip download --only-binary=:all: -r requirements.txt --dest build-wheels
-python packaging/build.py --runtime C:\build-inputs\python --wheels C:\build-inputs\wheels --redist C:\build-inputs\vc_redist.x64.exe --iscc "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" --out C:\build-output\release-1.0.2
+python packaging/build.py --runtime C:\build-inputs\python --wheels C:\build-inputs\wheels --redist C:\build-inputs\vc_redist.x64.exe --iscc "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" --out C:\build-output\release-1.0.3
 ```
 
 安装时在目标路径创建新的虚拟环境，拒绝直接搬运开发机 `.venv`；所有 Python 依赖使用 `--no-index` 离线安装。`SHA256SUMS.txt` 提供安装包校验值，`payload-manifest.json` 列出构建输入文件哈希。

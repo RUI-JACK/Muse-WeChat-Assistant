@@ -4,7 +4,7 @@ from pathlib import Path
 ROOT=Path(__file__).resolve().parent.parent
 MODULES=('auto_y bridge chat_settings contact_settings context_archive conversation_context desktop_adapter '
  'group_adapter group_context group_diagnostics group_ocr group_policy group_runtime image_support integrated_confirmation '
- 'reply_metrics reply_style status_ui status_window storage uia_fast_read worker_entry browser_launcher environment_check').split()
+ 'reply_metrics reply_style reply_queue reply_scope status_ui status_window storage uia_fast_read worker_entry browser_launcher environment_check').split()
 def run(args):subprocess.run([str(x) for x in args],check=True)
 def main():
  p=argparse.ArgumentParser();p.add_argument('--runtime',required=True,type=Path);p.add_argument('--wheels',required=True,type=Path)
@@ -37,7 +37,7 @@ def main():
  manifest={str(x.relative_to(payload)).replace('\\','/'):hashlib.sha256(x.read_bytes()).hexdigest() for x in payload.rglob('*') if x.is_file()}
  (a.out/'payload-manifest.json').write_text(json.dumps(manifest,ensure_ascii=False,indent=2),encoding='utf-8')
  run([a.iscc,'/DPayloadDir='+str(payload),'/DOutputDir='+str(a.out),ROOT/'packaging/installer.iss'])
- setup=a.out/'Muse-WeChat-Assistant-Setup-1.0.2-x64.exe'
+ setup=a.out/'Muse-WeChat-Assistant-Setup-1.0.3-x64.exe'
  (a.out/'SHA256SUMS.txt').write_text(hashlib.sha256(setup.read_bytes()).hexdigest()+'  '+setup.name+'\n',encoding='ascii')
  print('BUILT',setup,setup.stat().st_size,flush=True)
 if __name__=='__main__':main()

@@ -79,3 +79,8 @@ class GroupContext(ConversationContext):
     def confirm_sent(self,event_id,text):
         from types import SimpleNamespace
         self.observe(SimpleNamespace(key='sent:'+event_id,sender=self.self_name,text=text,kind='mmui::ChatTextItemView'),'outgoing')
+
+    def for_reply(self,group,source_keys):
+        if group!=self.contact:raise ValueError('上下文不属于当前群聊。')
+        keys=set(source_keys or [])
+        return [dict(turn) for turn in self.turns if turn['key'] not in keys][-24:]
