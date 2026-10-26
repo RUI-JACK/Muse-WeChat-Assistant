@@ -1,0 +1,18 @@
+{
+  "allowed_contact": "",
+  "chat_mode": "private",
+  "allowed_group": "",
+  "group_self_name": "",
+  "group_reply_policy": "mention",
+  "mode": "approve_each_reply",
+  "auto_y_enabled": false,
+  "poll_seconds": 0.4,
+  "merge_seconds": 1.0,
+  "draft_poll_seconds": 0.3,
+  "reply_timeout_seconds": 300,
+  "max_reply_characters": 500,
+  "retention_days": 7,
+  "expected_wechat_version": "4.1.15.56",
+  "muse_sender_label": "Nora",
+  "disclosure": "【AI辅助回复】"
+}

@@ -1,0 +1,12 @@
+uiautomation==2.0.29
+comtypes==1.4.17
+pillow==13.0.0
+pywin32==312
+winrt-runtime==4.0.3
+winrt-Windows.Foundation==4!10.0.28000.2705
+winrt-Windows.Foundation.Collections==4!10.0.28000.2705
+winrt-Windows.Globalization==4!10.0.28000.2705
+winrt-Windows.Graphics.Imaging==4!10.0.28000.2705
+winrt-Windows.Media.Ocr==4!10.0.28000.2705
+winrt-Windows.Storage.Streams==4!10.0.28000.2705
+typing_extensions==4.16.0
