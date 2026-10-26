@@ -107,4 +107,7 @@ class GroupWeChat(WeChat):
             trigger_index=max((i for i,m in enumerate(rows) if m.key in self.required_sources),default=-1)
             if any(m.direction=='unknown' for m in rows[trigger_index+1:] if m.kind=='mmui::ChatTextItemView' or media_type(m)):
                 raise NotReady('触发消息后存在无法判断发送方向的消息，本条跳过。')
-        return [(m.key,m.text) for m in rows if m.direction=='outgoing'][-8:]
+        # Older owner messages rolling off the top are not a manual reply.
+        # Only new owner rows AFTER this batch's first trigger invalidate it.
+        first=min((i for i,m in enumerate(rows) if m.key in self.required_sources),default=-1)
+        return [(m.key,m.text) for m in rows[first+1:] if m.direction=='outgoing']

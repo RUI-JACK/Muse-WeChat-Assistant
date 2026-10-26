@@ -7,7 +7,8 @@ from group_adapter import GroupMessage,GroupWeChat
 from group_policy import mentioned,eligible,main_body,build_group_prompt,GROUP_TITLE
 from group_context import GroupArchive,GroupContext
 from group_ocr import resolve_sender
-from group_runtime import GroupSession,process_group
+from group_runtime import GroupSession,process_group,muse_wait_reason
+from group_diagnostics import ReceiveDiagnostics
 from chat_settings import save_chat
 from context_archive import ContactArchive
 from bridge import MessageTracker
@@ -28,9 +29,12 @@ class Policy(unittest.TestCase):
         self.assertEqual(resolve_sender('甲',['甲','甲']),'')
         self.assertEqual(resolve_sender('完全陌生昵称',['测试成员3','测试群昵称']),'')
     def test_exact_mentions(self):
-        for text in ('@测试群昵称\u2005你说呢','@测试群昵称','你好 @测试群昵称\u2005'):
+        for text in ('@测试群昵称\u2005你说呢','@测试群昵称','你好 @测试群昵称\u2005',
+                     '中文@测试群昵称\u2005你说呢','hello@测试群昵称\u2005看看',
+                     '@测试群昵称 普通空格','@测试群昵称\u00a0看看','@测试群昵称，看看'):
             self.assertTrue(mentioned(text,'测试群昵称'))
-        for text in ('hello','@测试群昵称2\u2005','@所有人\u2005','@测试群昵称 普通空格','@aurelius\u2005'):
+        for text in ('hello','@测试群昵称2\u2005','@所有人\u2005','@aurelius\u2005',
+                     'user@测试群昵称.com','@@测试群昵称\u2005','@测试群昵称_extra'):
             self.assertFalse(mentioned(text,'测试群昵称'))
 
     def test_quote_only_never_triggers(self):
@@ -99,6 +103,33 @@ class Listener(unittest.TestCase):
         s.wx.snapshot.return_value=[msg('old','@测试群昵称'),msg('new','你好')]
         s.pump();self.assertFalse(s.pending);self.assertEqual(len(s.memory.turns),2)
 
+    def test_sender_ocr_failure_retries_same_source_after_newer_rows(self):
+        s=self.session([msg('base','你好')])
+        s.wx.snapshot.return_value=[msg('base','你好'),msg('miss','中文@测试群昵称\u2005看看',sender='')]
+        s.pump()
+        self.assertFalse(s.pending);self.assertIn('miss',s.tracker.waiting)
+        self.assertEqual(s.waiting_sender_count,1)
+        s.wx.snapshot.return_value=[msg('base','你好'),msg('miss','中文@测试群昵称\u2005看看',sender='甲'),msg('newer','另一个人的话','乙')]
+        s.pump();self.assertEqual([m.key for m in s.pending],['miss'])
+        s.pump();self.assertEqual([m.key for m in s.pending],['miss'])
+        self.assertEqual(s.waiting_sender_count,0)
+
+    def test_unknown_direction_is_retryable_and_never_assumed_incoming(self):
+        s=self.session([msg('base','你好')])
+        s.wx.snapshot.return_value+=[msg('unknown','@测试群昵称',direction='unknown')]
+        s.pump();self.assertFalse(s.pending);self.assertIn('unknown',s.tracker.waiting)
+        s.wx.snapshot.return_value[-1]=msg('unknown','@测试群昵称',sender='本人',direction='outgoing')
+        s.pump();self.assertFalse(s.pending);self.assertNotIn('unknown',s.tracker.waiting)
+
+    def test_busy_muse_defers_new_request_and_draft_is_not_overwritten(self):
+        muse=Mock();muse.generating.return_value=True
+        self.assertIn('排队',muse_wait_reason(muse));muse.composer.assert_not_called()
+        muse.generating.return_value=False;edit=Mock();edit.GetValuePattern.return_value.Value='本人草稿'
+        muse.composer.return_value=(edit,None,[])
+        self.assertIn('不会覆盖',muse_wait_reason(muse));muse.request_group.assert_not_called()
+        edit.GetValuePattern.return_value.Value=''
+        self.assertEqual(muse_wait_reason(muse),'')
+
     def test_manual_reply_clears_only_current_queue_future_mentions_work(self):
         s=self.session([msg('base','你好')]);s.wx.snapshot.return_value=[msg('base','你好'),msg('a','@测试群昵称')]
         s.pump();self.assertEqual(len(s.pending),1)
@@ -128,6 +159,13 @@ class Listener(unittest.TestCase):
             self.assertEqual(process_group(s,muse,journal,[msg('a','@测试群昵称')],CFG,lambda *a:6),'skipped')
         s.wx.send_approved.assert_not_called()
 
+    def test_pre_send_view_change_skips_only_this_reply_not_the_listener(self):
+        s=self.session();muse=Mock();journal=Mock()
+        s.wx.send_signature.side_effect=NotReady('触发消息已滚出视图')
+        with patch('bridge.STOP',SimpleNamespace(exists=lambda:False)):
+            self.assertEqual(process_group(s,muse,journal,[msg('a','@测试群昵称')],CFG,lambda *a:6),'skipped')
+        muse.request_group.assert_not_called();s.wx.send_approved.assert_not_called()
+
     def test_no_and_cancel_and_duplicate_never_send(self):
         for decision,expected in ((7,'skipped'),(2,'pause')):
             s=self.session();s.pump=Mock();muse=Mock();muse.draft.return_value='你好';journal=Mock()
@@ -156,6 +194,26 @@ class SendGuards(unittest.TestCase):
         with self.assertRaises(NotReady):self.adapter([msg('trigger','@测试群昵称'),msg('x','未知',direction='unknown')]).send_signature()
         wx=self.adapter([msg('old','被裁切历史',direction='unknown'),msg('trigger','@测试群昵称')])
         self.assertEqual(wx.send_signature(),[])
+
+    def test_earlier_owner_row_rolling_off_does_not_invalidate_draft(self):
+        rows=[msg('old-own','先前回复','本人','outgoing'),msg('trigger','@测试群昵称')]
+        wx=self.adapter(rows);signature=wx.send_signature()
+        rows.pop(0);rows.append(msg('new','群里又来了一句','乙'))
+        self.assertEqual(wx.send_signature(),signature)
+        rows.append(msg('manual','本人刚刚手动回复','本人','outgoing'))
+        self.assertNotEqual(wx.send_signature(),signature)
+
+
+class ReceiveTrace(unittest.TestCase):
+    def test_local_trace_excludes_bodies_and_deduplicates_identical_waits(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path=Path(tmp)/'group-receive.jsonl';trace=ReceiveDiagnostics(path)
+            trace.record('key','waiting_sender',mentioned=True)
+            trace.record('key','waiting_sender',mentioned=True)
+            trace.record('key','queued',mentioned=True)
+            records=[json.loads(line) for line in path.read_text(encoding='utf-8').splitlines()]
+            self.assertEqual([r['reason'] for r in records],['waiting_sender','queued'])
+            self.assertTrue(all(set(r)=={'time','source','reason','mentioned'} for r in records))
 
 
 class SetupAndConfirmation(unittest.TestCase):

@@ -4,7 +4,7 @@ using System.IO;
 using System.Runtime.InteropServices;
 using System.Windows.Forms;
 using System.Reflection;
-[assembly: AssemblyVersion("1.0.0.0")]
+[assembly: AssemblyVersion("1.0.1.0")]
 [assembly: AssemblyProduct("Muse WeChat Assistant")]
 internal static class Launcher {
  [DllImport("kernel32.dll", CharSet=CharSet.Unicode, SetLastError=true)]

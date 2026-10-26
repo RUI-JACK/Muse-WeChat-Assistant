@@ -4,7 +4,7 @@ Windows 桌面助手：读取明确选择的微信会话，交给已登录的 Mu
 
 ## 安装与使用
 
-1. 从 [Releases](https://github.com/RUI-JACK/Muse-WeChat-Assistant/releases) 下载 `Muse-WeChat-Assistant-Setup-1.0.0-x64.exe`，安装时会离线准备 Python 与程序依赖。
+1. 从 [Releases](https://github.com/RUI-JACK/Muse-WeChat-Assistant/releases) 下载 `Muse-WeChat-Assistant-Setup-1.0.1-x64.exe`，安装时会离线准备 Python 与程序依赖。
 2. 自行安装并登录 **微信 4.1.15.56**。运行桌面“打开 Muse”，在独立浏览器窗口登录自己的 Muse 账号。
 3. 运行“Muse 微信助手”，选择私聊或群聊，输入准确会话名；群聊填写被 @ 时显示的本人群昵称，不含 @。在微信中选中该聊天后点击开始。
 4. “自动点击 Y”开启时自动确认并发送草稿，关闭时由本人逐条确认。开始前不监听历史；关闭状态窗口会结束它管理的工作进程。
@@ -14,6 +14,8 @@ Windows 桌面助手：读取明确选择的微信会话，交给已登录的 Mu
 微信、Muse、Chrome/Edge 不打包分发；目标机器需要 Chrome 或系统 Edge，Muse 需要网络及有效账号。软件使用普通桌面可访问性界面，不是微信官方接口，不支持锁屏、注销或完全脱离界面的服务运行。
 
 ## 功能与边界
+
+v1.0.1 修复群聊 @ 识别、昵称识别重试及聊天滚动误判，并增加排队等待和不含正文的本地接收诊断。详情见 [群聊漏回修复](GROUP-RECEIVE-FIX.md)。升级前先结束助手，覆盖安装会保留配置和聊天上下文。
 
 - 私聊与群聊读取、发送边界独立；群聊只回复新消息正文里的精确 `@本人昵称`，引用、@其他人、仅@所有人不触发。检测基于可见文本，不能完全区分手打的同形文字与原生 @ 元数据。
 - 私聊风格为知性成熟、温暖体贴；群聊为贴吧式犀利回怼。二者在 `reply_style.py` 分别定义，可独立修改。
@@ -44,7 +46,7 @@ python -m venv .venv
 
 ```powershell
 python -m pip download --only-binary=:all: -r requirements.txt --dest build-wheels
-python packaging/build.py --runtime C:\build-inputs\python --wheels C:\build-inputs\wheels --redist C:\build-inputs\vc_redist.x64.exe --iscc "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" --out C:\build-output\release-1.0.0
+python packaging/build.py --runtime C:\build-inputs\python --wheels C:\build-inputs\wheels --redist C:\build-inputs\vc_redist.x64.exe --iscc "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" --out C:\build-output\release-1.0.1
 ```
 
 安装时在目标路径创建新的虚拟环境，拒绝直接搬运开发机 `.venv`；所有 Python 依赖使用 `--no-index` 离线安装。`SHA256SUMS.txt` 提供安装包校验值，`payload-manifest.json` 列出构建输入文件哈希。

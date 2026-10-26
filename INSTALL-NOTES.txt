@@ -1,4 +1,4 @@
-Muse 微信助手 1.0.0
+Muse 微信助手 1.0.1
 
 适用：Windows 10 2004 及以上 / Windows 11，Intel 或 AMD x64。当前实际安装验证为 Windows 11 x64；不是 macOS、Linux、ARM64 或所有微信版本通用安装包。
 

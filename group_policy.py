@@ -12,10 +12,19 @@ def main_body(text):
 
 
 def mentioned(text,name):
-    # WeChat inserts U+2005 after a selected mention. A terminal mention is
-    # also accepted. Ordinary spaces/prefixes and quoted mentions are ignored.
+    # A native mention may immediately follow Chinese or Latin text. Desktop
+    # accessibility can expose the separator as U+2005, NBSP or plain space.
+    # Match the complete nickname, never a prefix, email or quoted mention.
+    if not isinstance(name,str) or not name or name in ('所有人','全体成员'):return False
     body=main_body(text)
-    return bool(re.search(r'(?<![\w@])@'+re.escape(name)+r'(?:\u2005|$)',body))
+    for match in re.finditer(r'(?<!@)@'+re.escape(name),body):
+        start,end=match.span();after=body[end:];before=body[:start]
+        if before and (before[-1].isascii() and (before[-1].isalnum() or before[-1] in '._%+-')):
+            # U+2005 is a native mention delimiter; otherwise an ASCII local
+            # part before @ may be an email address and is not a trigger.
+            if not after.startswith('\u2005'):continue
+        if not after or after[0].isspace() or after[0] in '，。！？、；：,!?;:（）()【】[]“”"\'':return True
+    return False
 
 
 def eligible(message,self_name):

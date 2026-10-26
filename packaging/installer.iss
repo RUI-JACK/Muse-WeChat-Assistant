@@ -7,7 +7,7 @@
 [Setup]
 AppId={{74E9AB93-89ED-462D-A361-A8B0A823CA90}
 AppName=Muse 微信助手
-AppVersion=1.0.0
+AppVersion=1.0.1
 AppPublisher=RUI-JACK
 AppPublisherURL=https://github.com/RUI-JACK/Muse-WeChat-Assistant
 DefaultDirName={localappdata}\Programs\MuseWeChatAssistant
@@ -17,7 +17,7 @@ ArchitecturesAllowed=x64os
 ArchitecturesInstallIn64BitMode=x64os
 MinVersion=10.0.19041
 OutputDir={#OutputDir}
-OutputBaseFilename=Muse-WeChat-Assistant-Setup-1.0.0-x64
+OutputBaseFilename=Muse-WeChat-Assistant-Setup-1.0.1-x64
 SetupIconFile={#PayloadDir}\assets\muse.ico
 UninstallDisplayIcon={app}\Muse微信助手.exe
 Compression=lzma2/fast
