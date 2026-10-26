@@ -31,15 +31,30 @@ class ImageUnavailable(RuntimeError):
     """Nothing was submitted to Muse; skip this media rather than invent it."""
 
 
+class MediaNotReady(ImageUnavailable):
+    """The same verified source exists, but its frame is still refreshing."""
+
+
 def media_type(message):
     if message.kind not in MEDIA_KINDS:
         return None
-    name = message.text.strip()
+    # Dedicated image/sticker providers stay media while their label loads.
+    # Text rows claiming to be images still cannot cross this class boundary.
+    if message.kind=='mmui::ChatImageItemView':return 'image'
+    if message.kind=='mmui::ChatStickerItemView':return 'sticker'
+    name=re.split(r'\r?\n引用\s',message.text,maxsplit=1)[0].strip()
     if name in IMAGE_NAMES:
         return 'image'
     if name in STICKER_NAMES or re.fullmatch(r'动画表情 \[[^\]\r\n]{1,100}\]',name):
         return 'sticker'
     return None
+
+
+def source_label(kind,text):
+    """Keep a media source stable through loading/caption/quote label changes."""
+    from types import SimpleNamespace
+    media=media_type(SimpleNamespace(kind=kind,text=text))
+    return '<media:'+media+'>' if media else text
 
 
 @dataclass(frozen=True)
@@ -134,7 +149,10 @@ def fresh_media(wx, message):
     fresh = next((m for m in wx.snapshot() if m.key == message.key), None)
     if fresh is None or media_type(fresh) != media_type(message) or not media_type(fresh):
         raise ImageUnavailable('图片已不在当前聊天中，未读取其他消息。')
-    if wx.direction(fresh) != 'incoming':
+    direction=wx.direction(fresh)
+    if direction=='unknown':
+        raise MediaNotReady('图片发送方向仍在刷新，稍后核对同一条消息。')
+    if direction != 'incoming':
         raise ImageUnavailable('无法确认图片来自所选好友，未读取。')
     return fresh
 
@@ -154,7 +172,7 @@ def crop_media_frame(wx, message, capture):
     picture, window = capture(wx.hwnd)
     again = fresh_media(wx, message)
     if again.rect != fresh.rect:
-        raise ImageUnavailable('截图期间消息位置变化，本条已跳过。')
+        raise MediaNotReady('截图期间消息位置变化，稍后重读同一条。')
     ox, oy = window[:2]
     a,b,c,d = box
     if a >= c or b >= d or a < ox or b < oy or c > window[2] or d > window[3]:
@@ -165,8 +183,19 @@ def crop_media_frame(wx, message, capture):
     diff = ImageChops.difference(frame, background).convert('L').point(lambda p: 255 if p > 18 else 0)
     content = diff.getbbox()
     if not content or content[2]-content[0] < 16 or content[3]-content[1] < 16:
-        raise ImageUnavailable('没有读到有效图片画面，本条已跳过。')
+        raise MediaNotReady('图片画面尚未就绪，稍后重读同一条。')
     return frame.crop(content)
+
+
+def wait_media_frame(wx,message,capture,should_stop=lambda:False,timeout=2.5):
+    """Retry only rendering, never repeat a Send/Save action or switch source."""
+    until=time.monotonic()+timeout
+    while True:
+        if should_stop():raise ImageUnavailable('已停止图片处理。')
+        try:return crop_media_frame(wx,message,capture)
+        except MediaNotReady:
+            if time.monotonic()>=until:raise
+            time.sleep(.15)
 
 
 def save_original(wx, message, destination, walk, should_stop):
@@ -181,7 +210,9 @@ def save_original(wx, message, destination, walk, should_stop):
     if win32gui.GetForegroundWindow() != wx.hwnd or owned_dialog(wx.hwnd):
         return False
     scale = ctypes.windll.user32.GetDpiForWindow(wx.hwnd)/96
-    x,y = fresh.rect[0]+round(80*scale),fresh.rect[1]+round(25*scale)
+    inset=max(25,getattr(type(wx),'media_top_inset',6)+18)
+    x,y = fresh.rect[0]+round(80*scale),fresh.rect[1]+round(inset*scale)
+    if not(fresh.rect[0]<x<fresh.rect[2] and fresh.rect[1]<y<fresh.rect[3]):return False
     if auto.ControlFromPoint(x,y).ProcessId != wx.pid:
         return False
     auto.RightClick(x,y,waitTime=.2)
@@ -235,11 +266,18 @@ def extract_attachment(wx, message, directory, capture, walk, should_stop=lambda
     name=hashlib.sha256(message.key.encode()).hexdigest()[:16]
     path=directory/('media-'+name+'.png')
     origin='visible_frame' if media=='sticker' else 'visible_thumbnail'
-    if media=='image' and save_original(wx,message,path,walk,should_stop):
+    saved=False
+    if media=='image':
+        try:saved=save_original(wx,message,path,walk,should_stop)
+        except MediaNotReady:
+            # The chooser may already have been invoked. Never repeat that
+            # action; wait for this source's visible frame instead.
+            saved=False
+    if saved:
         frame=read_checked_image(path)
         origin='saved_image'
     else:
-        frame=crop_media_frame(wx,message,capture)
+        frame=wait_media_frame(wx,message,capture,should_stop)
     frame.info.clear()
     frame.save(path,format='PNG')
     if path.stat().st_size>MAX_IMAGE_BYTES:

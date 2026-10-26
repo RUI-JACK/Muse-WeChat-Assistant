@@ -5,7 +5,7 @@ import uiautomation as auto
 import win32gui,win32process,win32con
 from PIL import ImageStat
 from desktop_adapter import WeChat,Message,NotReady,capture_window
-from image_support import media_type
+from image_support import media_type,source_label
 from group_policy import main_body
 
 
@@ -62,7 +62,7 @@ class GroupWeChat(WeChat):
         picture=None;window=None;new_cache={}
         for row in rows:
             r=row.BoundingRectangle
-            key=hashlib.sha256(repr(('group',self.contact,self.pid,self.hwnd,row.GetRuntimeId(),row.Name)).encode()).hexdigest()
+            key=hashlib.sha256(repr(('group',self.contact,self.pid,self.hwnd,row.GetRuntimeId(),source_label(row.ClassName,row.Name))).encode()).hexdigest()
             m=GroupMessage(key,main_body(row.Name),row.ClassName,(r.left,r.top,r.right,r.bottom))
             supported=m.kind=='mmui::ChatTextItemView' or media_type(m)
             if supported:

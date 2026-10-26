@@ -9,7 +9,7 @@ from PIL import Image, ImageDraw
 
 import bridge
 import image_support as images
-from desktop_adapter import Message, Muse, NotReady, build_request_text, chat_tail
+from desktop_adapter import Message, Muse, WeChat, NotReady, build_request_text, chat_tail
 from storage import Journal
 
 
@@ -25,6 +25,58 @@ def attachment(directory, key='pic', media='image'):
 
 
 class MediaIsolation(unittest.TestCase):
+    def test_quote_and_sticker_caption_do_not_hide_private_media(self):
+        self.assertEqual(images.media_type(row(name='图片\n引用 测试好友 的消息 : 看这个')),'image')
+        self.assertEqual(images.media_type(row(name='动画表情 [鼓掌]\n引用 测试好友 的消息 : 哈哈')),'sticker')
+        self.assertEqual(images.media_type(row(name='下载中',kind='mmui::ChatImageItemView')),'image')
+        self.assertEqual(images.media_type(row(name='',kind='mmui::ChatStickerItemView')),'sticker')
+        self.assertIsNone(images.media_type(row(name='图片\n引用 测试好友 的消息 : 看这个',kind='mmui::ChatTextItemView')))
+        self.assertIsNone(images.media_type(row(name='文件\n引用 测试好友 的消息 : 图片')))
+
+    def test_loading_label_change_keeps_private_media_in_tracker_until_ready(self):
+        provider=NS(Name='图片',ClassName='mmui::ChatImageItemView',
+                    BoundingRectangle=NS(left=0,top=100,right=600,bottom=220),GetRuntimeId=lambda:[41,99])
+        view=Mock();view.GetChildren.return_value=[provider]
+        wx=WeChat.__new__(WeChat);wx.pid=123;wx.hwnd=456;wx.controls=Mock(return_value=(None,None,view))
+        first=wx.snapshot()[0]
+        tracker=bridge.MessageTracker([row('base',name='之前一句',kind='mmui::ChatTextItemView')])
+        tracker.update([row('base',name='之前一句',kind='mmui::ChatTextItemView'),first])
+        provider.Name='图片\n引用 测试好友 的消息 : 看这个'
+        refreshed=wx.snapshot()[0]
+        self.assertEqual(first.key,refreshed.key)
+        self.assertEqual([m.key for m in tracker.update([row('base',name='之前一句',kind='mmui::ChatTextItemView'),refreshed])],[first.key])
+        self.assertEqual(chat_tail([first]),chat_tail([refreshed]))
+        tracker.handled(first.key)
+        self.assertEqual(tracker.update([refreshed]),[])
+        provider.GetRuntimeId=lambda:[41,100]
+        self.assertNotEqual(wx.snapshot()[0].key,first.key)
+
+    def test_refreshing_frame_is_retried_without_repeating_save_or_send(self):
+        ready=Image.new('RGB',(60,60),'blue')
+        with patch.object(images,'crop_media_frame',side_effect=[images.MediaNotReady('blank first frame'),ready]) as crop, \
+             patch.object(images.time,'sleep'):
+            self.assertIs(images.wait_media_frame(Mock(),row(),Mock()),ready)
+        self.assertEqual(crop.call_count,2)
+        with patch.object(images,'crop_media_frame',side_effect=images.ImageUnavailable('wrong source')) as crop:
+            with self.assertRaises(images.ImageUnavailable):images.wait_media_frame(Mock(),row(),Mock())
+        self.assertEqual(crop.call_count,1)
+
+    def test_render_timeout_and_stop_do_not_read_another_image(self):
+        with patch.object(images,'crop_media_frame',side_effect=images.MediaNotReady('not ready')) as crop:
+            with self.assertRaises(images.MediaNotReady):images.wait_media_frame(Mock(),row(),Mock(),timeout=0)
+        self.assertEqual(crop.call_count,1)
+        with patch.object(images,'crop_media_frame') as crop:
+            with self.assertRaises(images.ImageUnavailable):images.wait_media_frame(Mock(),row(),Mock(),lambda:True)
+        crop.assert_not_called()
+
+    def test_save_as_is_never_retried_after_a_transient_failure(self):
+        with tempfile.TemporaryDirectory() as tmp, \
+             patch.object(images,'save_original',side_effect=images.MediaNotReady('after chooser')) as save, \
+             patch.object(images,'wait_media_frame',return_value=Image.new('RGB',(60,60),'blue')):
+            result=images.extract_attachment(Mock(),row(),tmp,Mock(),Mock())
+            self.assertEqual(result.origin,'visible_thumbnail')
+        self.assertEqual(save.call_count,1)
+
     def test_text_claiming_to_be_picture_is_still_text(self):
         self.assertIsNone(images.media_type(row(kind='mmui::ChatTextItemView')))
         self.assertIsNone(images.media_type(row(name='语音')))
@@ -248,6 +300,14 @@ class ImageReplyFlow(unittest.TestCase):
         with patch.object(bridge,'wait_draft',side_effect=arrival):
             self.assertEqual(self.process(),'superseded')
         self.wx.send_approved.assert_not_called()
+
+    def test_same_sticker_finishing_loading_does_not_discard_its_reply(self):
+        def refreshed(*args):
+            self.wx.snapshot.return_value=[row(self.m.key,'动画表情 [鼓掌]\n引用 测试好友 的消息 : 继续')]
+            return '接住表情的回复'
+        with patch.object(bridge,'wait_draft',side_effect=refreshed):
+            self.assertEqual(self.process(),'sent_ui')
+        self.muse.request_images.assert_called_once();self.wx.send_approved.assert_called_once()
 
 
 if __name__=='__main__':unittest.main()

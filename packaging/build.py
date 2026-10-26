@@ -37,7 +37,7 @@ def main():
  manifest={str(x.relative_to(payload)).replace('\\','/'):hashlib.sha256(x.read_bytes()).hexdigest() for x in payload.rglob('*') if x.is_file()}
  (a.out/'payload-manifest.json').write_text(json.dumps(manifest,ensure_ascii=False,indent=2),encoding='utf-8')
  run([a.iscc,'/DPayloadDir='+str(payload),'/DOutputDir='+str(a.out),ROOT/'packaging/installer.iss'])
- setup=a.out/'Muse-WeChat-Assistant-Setup-1.0.1-x64.exe'
+ setup=a.out/'Muse-WeChat-Assistant-Setup-1.0.2-x64.exe'
  (a.out/'SHA256SUMS.txt').write_text(hashlib.sha256(setup.read_bytes()).hexdigest()+'  '+setup.name+'\n',encoding='ascii')
  print('BUILT',setup,setup.stat().st_size,flush=True)
 if __name__=='__main__':main()

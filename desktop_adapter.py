@@ -13,7 +13,7 @@ import uiautomation as auto
 from comtypes import COMError
 from PIL import Image, ImageStat
 from image_support import (media_type, image_prompt, ImageUnavailable, owned_dialog,
-                           choose_file, wait_until, read_checked_image)
+                           choose_file, wait_until, read_checked_image,source_label)
 from conversation_context import clean_context
 from reply_style import get_reply_style
 from uia_fast_read import button_names,document_text
@@ -134,7 +134,7 @@ class WeChat:
         records = []
         for row in control.GetChildren():
             rect = row.BoundingRectangle
-            key = hashlib.sha256(repr((self.pid,self.hwnd,row.GetRuntimeId(),row.Name)).encode()).hexdigest()
+            key = hashlib.sha256(repr((self.pid,self.hwnd,row.GetRuntimeId(),source_label(row.ClassName,row.Name))).encode()).hexdigest()
             records.append(Message(key,row.Name,row.ClassName,(rect.left,rect.top,rect.right,rect.bottom)))
         return records
 
@@ -257,7 +257,7 @@ def chat_tail(rows,width=5):
     Comparing keys re-counted RuntimeIds, so a repaint or a time separator
     alone could invalidate a finished draft. Compare what is actually said.
     """
-    kept = [(m.kind,m.text.strip() + ('#'+m.key if media_type(m) else '')) for m in rows
+    kept = [(m.kind,(source_label(m.kind,m.text)+'#'+m.key) if media_type(m) else m.text.strip()) for m in rows
             if m.kind != 'mmui::ChatItemView' and not TIME_LINE.match(m.text.strip())]
     return kept[-width:]
 

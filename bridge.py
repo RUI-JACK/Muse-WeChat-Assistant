@@ -142,7 +142,7 @@ def process_batch(wx,muse,journal,contact,incoming,config,demo=False,review=appr
             # voice/file arrivals retain the original warning and review path.
             added = [kind for kind,name in current_tail if (kind,name) not in signature]
             if any(kind == 'mmui::ChatTextItemView' for kind in added) or any(
-                    media_type(m) and (m.kind,m.text.strip()+'#'+m.key) not in signature
+                    media_type(m) and chat_tail([m])[0] not in signature
                     for m in wx.snapshot()):
                 journal.state(event_id,'superseded')
                 status('draft_superseded',pid=os.getpid(),contact=contact,event_id=event_id,
